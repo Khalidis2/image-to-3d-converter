@@ -880,7 +880,7 @@
         // Convert button
         document.getElementById('convertBtn').addEventListener('click', handleConvert);
 
-        async function handleConvert() {
+                async function handleConvert() {
             if (!uploadedImage) return;
 
             clearError();
@@ -890,51 +890,40 @@
             conversionStartTime = Date.now();
 
             try {
-                // Convert data URL to base64
                 const base64Image = uploadedImage.src.split(',')[1];
 
-                // Simulate progress while waiting for API
                 let progressInterval = setInterval(() => {
                     if (progress < 95) {
                         updateProgress(progress + Math.random() * 10);
                     }
                 }, 2000);
 
-                console.log('Calling HuggingFace Spaces Hunyuan3D API...');
+                console.log('Calling backend API...');
 
-                // Call HuggingFace Spaces API
-                const response = await fetch(
-                    'https://tencent-hunyuan3d-2-1.hf.space/call/infer',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            data: [
-                                base64Image,        // image as base64
-                                '',                 // no text prompt for image-to-3d
-                                'None',             // negative prompt
-                                1,                  // guidance scale
-                                'generate'          // mode
-                            ]
-                        })
-                    }
-                );
+                const response = await fetch('/api/convert', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        imageBase64: base64Image
+                    })
+                });
 
                 clearInterval(progressInterval);
 
                 if (!response.ok) {
-                    throw new Error(`API error: ${response.status} ${response.statusText}`);
+                    throw new Error('API error: ' + response.status);
                 }
 
                 const result = await response.json();
-                console.log('API Response:', result);
+                console.log('Conversion success:', result);
 
                 const elapsed = Date.now() - conversionStartTime;
 
-                // HuggingFace returns: { data: [glb_url, ...] }
-                const glbUrl = result.data[0];
+                const modelArrayBuffer = Uint8Array.from(atob(result.modelData), c => c.charCodeAt(0)).buffer;
+                const modelBlob = new Blob([modelArrayBuffer], { type: 'application/octet-stream' });
+                const modelUrl = URL.createObjectURL(modelBlob);
 
                 model3D = {
                     id: 'model_' + Date.now(),
@@ -943,11 +932,18 @@
                     dimensions: { x: 100, y: 100, z: 100 },
                     fileSize: 5.2,
                     conversionTime: elapsed,
-                    modelUrl: glbUrl
+                    modelUrl: modelUrl,
+                    isDemo: result.isDemo || false
                 };
 
                 updateProgress(100);
-                document.getElementById('modelFormat').textContent = 'GLB';
+                
+                if (result.isDemo) {
+                    document.getElementById('modelFormat').textContent = 'GLB (Demo)';
+                } else {
+                    document.getElementById('modelFormat').textContent = 'GLB';
+                }
+                
                 document.getElementById('modelDimensions').textContent = 
                     `${model3D.dimensions.x}×${model3D.dimensions.y}×${model3D.dimensions.z}mm`;
                 document.getElementById('conversionTime').textContent = 
@@ -960,9 +956,94 @@
 
             } catch (error) {
                 console.error('Conversion error:', error);
-                showError('Conversion failed: ' + error.message + '. The HuggingFace queue might be full. Try again in a moment.');
+                showError('Conversion failed: ' + error.message);
                 processingState = 'error';
             }
+        }
+
+        function generateDemoGLB() {
+            // Generate a simple GLB (GLTF binary) file
+            // This is a minimal but valid GLB file format
+            
+            const json = {
+                asset: { version: "2.0" },
+                scene: 0,
+                scenes: [{ nodes: [0] }],
+                nodes: [{ mesh: 0 }],
+                meshes: [{
+                    primitives: [{
+                        attributes: { POSITION: 0 },
+                        indices: 1,
+                        mode: 4
+                    }]
+                }],
+                accessors: [
+                    {
+                        bufferView: 0,
+                        componentType: 5126,
+                        count: 8,
+                        type: "VEC3",
+                        max: [100, 100, 100],
+                        min: [0, 0, 0]
+                    },
+                    {
+                        bufferView: 1,
+                        componentType: 5125,
+                        count: 36,
+                        type: "SCALAR"
+                    }
+                ],
+                bufferViews: [
+                    { buffer: 0, byteLength: 96, byteOffset: 0 },
+                    { buffer: 0, byteLength: 144, byteOffset: 96 }
+                ],
+                buffers: [{ byteLength: 240 }]
+            };
+
+            const jsonString = JSON.stringify(json);
+            const jsonBuffer = new TextEncoder().encode(jsonString);
+            const jsonPadded = jsonBuffer.byteLength + (4 - jsonBuffer.byteLength % 4) % 4;
+
+            // Vertex positions (cube)
+            const vertices = new Float32Array([
+                0, 0, 0, 100, 0, 0, 100, 100, 0, 0, 100, 0,
+                0, 0, 100, 100, 0, 100, 100, 100, 100, 0, 100, 100
+            ]);
+
+            // Indices
+            const indices = new Uint32Array([
+                0, 1, 2, 0, 2, 3,
+                4, 6, 5, 4, 7, 6,
+                0, 4, 5, 0, 5, 1,
+                2, 6, 7, 2, 7, 3,
+                0, 3, 7, 0, 7, 4,
+                1, 5, 6, 1, 6, 2
+            ]);
+
+            const buffer = new ArrayBuffer(240);
+            new Float32Array(buffer, 0, 24).set(vertices);
+            new Uint32Array(buffer, 96, 36).set(indices);
+
+            // GLB header
+            const glbHeader = new Uint32Array([0x46546C67, 2, 20 + jsonPadded + 8 + 240]);
+            const jsonHeader = new Uint32Array([jsonPadded, 0x4E4F534A]);
+            const bufferHeader = new Uint32Array([240, 0x004E4942]);
+
+            const glb = new ArrayBuffer(20 + jsonPadded + 8 + 240);
+            const glbView = new Uint8Array(glb);
+            let offset = 0;
+
+            glbView.set(new Uint8Array(glbHeader.buffer), offset);
+            offset += 12;
+            glbView.set(new Uint8Array(jsonHeader.buffer), offset);
+            offset += 8;
+            glbView.set(jsonBuffer, offset);
+            offset += jsonPadded;
+            glbView.set(new Uint8Array(bufferHeader.buffer), offset);
+            offset += 8;
+            glbView.set(new Uint8Array(buffer), offset);
+
+            return glb;
         }
 
         function handleSlice() {
