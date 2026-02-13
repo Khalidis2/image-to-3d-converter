@@ -1,0 +1,18 @@
+{
+  "name": "image-to-3d-converter",
+  "version": "1.0.0",
+  "description": "Transform images into 3D models for 3D printing with Bambu Lab printers",
+  "main": "index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "3d",
+    "image-to-3d",
+    "bambu-lab",
+    "3d-printing",
+    "hunyuan3d"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
